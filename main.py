@@ -1,22 +1,18 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, abort
 from flask_bootstrap import Bootstrap  # for quickly rendering WTF-Forms
-from flask_ckeditor import CKEditor  # For writing blogs
+from flask_ckeditor import CKEditor  # for writing blogs
 from datetime import date
 from werkzeug.security import generate_password_hash, check_password_hash  # for generating and checking hashes
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import relationship
 from flask_login import UserMixin, LoginManager, login_user, login_required, current_user, \
-    logout_user  # Handling user account sessions and stuff.
+    logout_user  # for handling user account sessions and stuff.
 from forms import CreatePostForm, RegisterForm, LoginForm, CommentForm  # imported WTForms
 from flask_gravatar import Gravatar
-from functools import wraps  # for decorators. lets the wrapper function inherit for original function
+from functools import wraps  # for decorators. lets the wrapper function inherit from the decorated function
 import os
 
-
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
-ckeditor = CKEditor(app)
-Bootstrap(app)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', "SuperSecretKey")
 
 # CONNECT TO DB
 # This environment variable is available to Heroku. (same with the secret key above)
@@ -25,11 +21,22 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', "sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# Gravatar
+# Gravatar for accessing user avatars and
+# displaying them in our website.
 gravatar = Gravatar(app)
 
+# CKEditor for writing blogs.
+# It's basically a text editor as a form field
+# which outputs HTML code when submitted.
+ckeditor = CKEditor(app)
 
-# CONFIGURE TABLES
+# This provides Bootstrap integration with Flask.
+# But it's only really useful for quickly rendering WTForms.
+Bootstrap(app)
+
+
+# -------------------- TABLES --------------------
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(256), nullable=False, unique=True)
@@ -48,13 +55,16 @@ class BlogPost(db.Model):
     __tablename__ = "blog_posts"
     id = db.Column(db.Integer, primary_key=True)
 
+    # Many-To-One Relationship with User
     # child relationship with user table
     # this Foreign Key refers to the primary key of the User.
     author_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     title = db.Column(db.String(250), unique=True, nullable=False)
     subtitle = db.Column(db.String(250), nullable=False)
-    date = db.Column(db.String(250), nullable=False)
+    # has default argument, so this argument can be left
+    # empty when initializing BlogPost object
+    date = db.Column(db.String(250), nullable=False, default=date.today().strftime("%B %d, %Y"))
     body = db.Column(db.Text, nullable=False)
     img_url = db.Column(db.String(250), nullable=False)
 
@@ -73,14 +83,16 @@ class Comment(db.Model):
     comment = db.Column(db.String(250), nullable=False)
 
 
+# creates database and/or tables if they haven't been made already
 db.create_all()
 
-# LOGIN STUFF
+# ------------------ LOGIN STUFF ------------------
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 
 
-# this lets the login manager associate the user object (user record in the DB)
+# This lets the login manager associate the user object (user record in the DB)
 # with the current user. (or something like that)
 @login_manager.user_loader
 def load_user(user_id):
@@ -89,16 +101,17 @@ def load_user(user_id):
 
 # admin only decorator
 def admin_only(f):
-    """Calls the function only if it being accessed by the admin.
+    """Calls the (view) function only if it being accessed by the admin.
     In more literal terms, only calls and returns the decorated
     function if the current user's ID is 1. Otherwise,
-    returns an error."""
+    returns a 403 error."""
 
     # 'wraps' decorator lets the wrapper function inherit the
     # original functions properties and whatnot.
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if current_user.id == 1:
+        # Returns None when the user isn't logged in.
+        if getattr(current_user, 'id', None) == 1:
             return f(*args, **kwargs)
         else:
             return abort(403)
@@ -106,7 +119,7 @@ def admin_only(f):
     return wrapper
 
 
-# VIEW FUNCTIONS
+# ------------------ VIEW FUNCTIONS ------------------
 
 @app.route('/')
 def get_all_posts():
@@ -173,8 +186,9 @@ def show_post(post_id):
     requested_post = BlogPost.query.get(post_id)
     comment_form = CommentForm()
 
-    # summits comments
+    # submits comments
     if comment_form.validate_on_submit():
+        # check if the user is logged in or not
         if current_user.is_authenticated:
             new_comment = Comment(
                 user_id=current_user.id,
@@ -209,7 +223,6 @@ def add_new_post():
     if form.validate_on_submit():
         new_post = BlogPost(
             author_id=current_user.id,
-            date=date.today().strftime("%B %d, %Y"),
             title=form.title.data,
             subtitle=form.subtitle.data,
             body=form.body.data,
